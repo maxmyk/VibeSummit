@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Camera, ChevronLeft, HeartHandshake, QrCode, Search, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { ensureQuestionsSeeded, ensureSharedAssessment, finalizeAssessment, loadSharedAssessmentSession, TOTAL_ASSESSMENT_QUESTIONS, vibeLabelFromOcean } from "./assessment/index.js";
+import { canUseDyadicMatch, evaluateDyadicConversation, oceanScoresToProfile } from "./conversation/dyadicConversationModel.js";
+import { getDatabase, persistAppDatabase } from "./db/index.js";
 
 function Button({ children, className = "", ...props }) {
   return (
@@ -21,63 +24,26 @@ function CardContent({ children, className = "" }) {
   return <div className={className}>{children}</div>;
 }
 
-const questions = [
-  {
-    id: 1,
-    prompt: "What feels more like you at an event?",
-    left: { label: "Deep conversation", image: "https://placehold.co/800x520/111827/ffffff?text=Deep+Talk", value: 0 },
-    right: { label: "Meeting many people", image: "https://placehold.co/800x520/4f46e5/ffffff?text=Many+People", value: 1 },
-  },
-  {
-    id: 2,
-    prompt: "Which room would you rather enter?",
-    left: { label: "Quiet workshop", image: "https://placehold.co/800x520/0f766e/ffffff?text=Workshop", value: 0 },
-    right: { label: "Busy mixer", image: "https://placehold.co/800x520/f97316/ffffff?text=Mixer", value: 1 },
-  },
-  {
-    id: 3,
-    prompt: "What kind of session catches your eye?",
-    left: { label: "Technical demo", image: "https://placehold.co/800x520/1e3a8a/ffffff?text=Demo", value: 0 },
-    right: { label: "Big vision talk", image: "https://placehold.co/800x520/7c3aed/ffffff?text=Vision", value: 1 },
-  },
-  {
-    id: 4,
-    prompt: "How do you like to start conversations?",
-    left: { label: "With a clear topic", image: "https://placehold.co/800x520/334155/ffffff?text=Specific+Topic", value: 0 },
-    right: { label: "With open curiosity", image: "https://placehold.co/800x520/be123c/ffffff?text=Open+Curiosity", value: 1 },
-  },
-  {
-    id: 5,
-    prompt: "What sounds more energizing?",
-    left: { label: "Build something useful", image: "https://placehold.co/800x520/166534/ffffff?text=Build", value: 0 },
-    right: { label: "Explore something new", image: "https://placehold.co/800x520/0891b2/ffffff?text=Explore", value: 1 },
-  },
-  {
-    id: 6,
-    prompt: "Pick your preferred event rhythm.",
-    left: { label: "Planned schedule", image: "https://placehold.co/800x520/4338ca/ffffff?text=Planned", value: 0 },
-    right: { label: "Spontaneous flow", image: "https://placehold.co/800x520/db2777/ffffff?text=Spontaneous", value: 1 },
-  },
-  {
-    id: 7,
-    prompt: "Which person do you click with faster?",
-    left: { label: "Practical problem-solver", image: "https://placehold.co/800x520/0f172a/ffffff?text=Practical", value: 0 },
-    right: { label: "Creative brainstormer", image: "https://placehold.co/800x520/a16207/ffffff?text=Creative", value: 1 },
-  },
-  {
-    id: 8,
-    prompt: "What do you usually notice first?",
-    left: { label: "How it works", image: "https://placehold.co/800x520/155e75/ffffff?text=Mechanism", value: 0 },
-    right: { label: "How it feels", image: "https://placehold.co/800x520/c2410c/ffffff?text=Feeling", value: 1 },
-  },
+const ASSESSMENT_PROMPTS = [
+  "Which image feels more like you right now?",
+  "Pick the side that matches your gut instinct.",
+  "If you had to choose one vibe, which is closer?",
+  "Which scene would you rather step into?",
+  "Which option fits your usual event energy?",
 ];
 
+function padChoicesToLength(arr, len = TOTAL_ASSESSMENT_QUESTIONS) {
+  const out = [];
+  for (let i = 0; i < len; i++) out.push(arr[i % arr.length]);
+  return out;
+}
+
 const samplePeople = [
-  { userId: "u_maya_24", name: "Maya Chen", role: "Product Designer", company: "Early-stage startup", choices: [1, 1, 1, 1, 1, 1, 1, 1], vibe: "Creative Connector", opener: "What’s one product experience here that actually impressed you?" },
-  { userId: "u_andre_18", name: "Andre Wilson", role: "Backend Developer", company: "Cloud tools company", choices: [0, 0, 0, 0, 0, 0, 0, 0], vibe: "Practical Builder", opener: "What’s a technical problem you’ve seen solved well recently?" },
-  { userId: "u_sofia_31", name: "Sofia Martinez", role: "Data Analyst", company: "Climate analytics startup", choices: [0, 1, 0, 1, 0, 1, 0, 1], vibe: "Curious Analyst", opener: "What data or trend here surprised you today?" },
-  { userId: "u_noah_45", name: "Noah Kim", role: "Founder", company: "AI meeting assistant", choices: [1, 1, 0, 1, 1, 1, 0, 1], vibe: "Energetic Explorer", opener: "What are you building, and what made you start?" },
-  { userId: "u_ella_77", name: "Ella Thompson", role: "UX Researcher", company: "Design lab", choices: [0, 1, 1, 1, 1, 0, 1, 1], vibe: "Empathetic Strategist", opener: "What kind of conversations are you hoping to have here?" },
+  { userId: "u_maya_24", name: "Maya Chen", role: "Product Designer", company: "Early-stage startup", choices: padChoicesToLength([1, 1, 1, 1, 1, 1, 1, 1]), oceanScores: { o: 80, c: 45, e: 85, a: 78, n: 42 }, vibe: "Creative Connector", opener: "What’s one product experience here that actually impressed you?" },
+  { userId: "u_andre_18", name: "Andre Wilson", role: "Backend Developer", company: "Cloud tools company", choices: padChoicesToLength([0, 0, 0, 0, 0, 0, 0, 0]), oceanScores: { o: 42, c: 82, e: 28, a: 58, n: 35 }, vibe: "Practical Builder", opener: "What’s a technical problem you’ve seen solved well recently?" },
+  { userId: "u_sofia_31", name: "Sofia Martinez", role: "Data Analyst", company: "Climate analytics startup", choices: padChoicesToLength([0, 1, 0, 1, 0, 1, 0, 1]), oceanScores: { o: 62, c: 58, e: 52, a: 64, n: 48 }, vibe: "Curious Analyst", opener: "What data or trend here surprised you today?" },
+  { userId: "u_noah_45", name: "Noah Kim", role: "Founder", company: "AI meeting assistant", choices: padChoicesToLength([1, 1, 0, 1, 1, 1, 0, 1]), oceanScores: { o: 72, c: 52, e: 82, a: 66, n: 55 }, vibe: "Energetic Explorer", opener: "What are you building, and what made you start?" },
+  { userId: "u_ella_77", name: "Ella Thompson", role: "UX Researcher", company: "Design lab", choices: padChoicesToLength([0, 1, 1, 1, 1, 0, 1, 1]), oceanScores: { o: 76, c: 50, e: 54, a: 84, n: 46 }, vibe: "Empathetic Strategist", opener: "What kind of conversations are you hoping to have here?" },
 ];
 
 function getStoredProfile() {
@@ -106,12 +72,15 @@ function makeDisplayNameFromBadge(userId) {
   return `Attendee ${userId.slice(-6).toUpperCase()}`;
 }
 
-function getVibeName(choices) {
+function getVibeName(choices, oceanScores) {
+  if (oceanScores) return vibeLabelFromOcean(oceanScores);
   const ones = choices.reduce((sum, v) => sum + v, 0);
-  const firstHalf = choices.slice(0, Math.ceil(choices.length / 2)).reduce((sum, v) => sum + v, 0);
-  const secondHalf = choices.slice(Math.ceil(choices.length / 2)).reduce((sum, v) => sum + v, 0);
-  if (ones <= 2) return "Focused Builder";
-  if (ones >= 6) return "Social Explorer";
+  const n = choices.length || 1;
+  const ratio = ones / n;
+  const firstHalf = choices.slice(0, Math.ceil(n / 2)).reduce((sum, v) => sum + v, 0);
+  const secondHalf = choices.slice(Math.ceil(n / 2)).reduce((sum, v) => sum + v, 0);
+  if (ratio <= 0.28) return "Focused Builder";
+  if (ratio >= 0.72) return "Social Explorer";
   if (firstHalf > secondHalf) return "Vision-First Connector";
   if (secondHalf > firstHalf) return "Curious Strategist";
   return "Balanced Conversationalist";
@@ -132,6 +101,15 @@ function getMatchText(score) {
   return "Possible friction, but maybe useful contrast";
 }
 
+/** List row / headline: dyadic overall when both have OCEAN scores, else choice overlap. */
+function listMatchPercent(profile, person) {
+  if (canUseDyadicMatch(profile, person)) {
+    const { overall } = evaluateDyadicConversation(oceanScoresToProfile(profile.oceanScores), oceanScoresToProfile(person.oceanScores));
+    return Math.round(overall);
+  }
+  return matchScore(profile.choices, person.choices);
+}
+
 function getMatchDetails(myChoices, theirChoices) {
   const labels = [
     ["deep conversations", "many quick introductions"],
@@ -143,11 +121,16 @@ function getMatchDetails(myChoices, theirChoices) {
     ["practical problem-solving", "creative brainstorming"],
     ["how things work", "how things feel"],
   ];
+  const max = Math.min(myChoices.length, theirChoices.length);
+  while (labels.length < max) {
+    const n = labels.length + 1;
+    labels.push([`image set A (item ${n})`, `image set B (item ${n})`]);
+  }
   const similarities = [];
   const differences = [];
-  for (let i = 0; i < Math.min(myChoices.length, theirChoices.length, labels.length); i++) {
-    if (myChoices[i] === theirChoices[i]) similarities.push(`You both lean toward ${labels[i][myChoices[i]]}.`);
-    else differences.push(`You lean toward ${labels[i][myChoices[i]]}, while they lean toward ${labels[i][theirChoices[i]]}.`);
+  for (let i = 0; i < max; i++) {
+    if (myChoices[i] === theirChoices[i]) similarities.push(`You both picked the same side on item ${i + 1}.`);
+    else differences.push(`On item ${i + 1}, you picked ${labels[i][myChoices[i]]}, while they leaned toward ${labels[i][theirChoices[i]]}.`);
   }
   return { similarities: similarities.slice(0, 2), differences: differences.slice(0, 2) };
 }
@@ -254,7 +237,9 @@ function QrScanner({ title, subtitle, onDetected, onBack }) {
           onDetected(codes[0].rawValue);
           return;
         }
-      } catch {}
+      } catch {
+        /* ignore transient frame decode errors */
+      }
       rafRef.current = requestAnimationFrame(scanLoop);
     }
 
@@ -318,20 +303,83 @@ function QrScanner({ title, subtitle, onDetected, onBack }) {
   );
 }
 
+function AssessmentImage({ src, alt, className }) {
+  const [step, setStep] = useState(0);
+  const url = useMemo(() => {
+    if (step === 0) return src;
+    if (step === 1) {
+      if (/\.webp$/i.test(src)) return src.replace(/\.webp$/i, ".png");
+      if (/\.jpg$/i.test(src)) return src.replace(/\.jpg$/i, ".png");
+      if (/\.jpeg$/i.test(src)) return src.replace(/\.jpeg$/i, ".png");
+      return src;
+    }
+    return `https://placehold.co/800x520/1e293b/ffffff?text=${encodeURIComponent(alt.slice(0, 20))}`;
+  }, [src, alt, step]);
+
+  return <img src={url} alt={alt} className={className} onError={() => setStep((s) => Math.min(s + 1, 2))} />;
+}
+
 function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
   const [index, setIndex] = useState(0);
   const [choices, setChoices] = useState([]);
   const [started, setStarted] = useState(false);
-  const progress = Math.round((choices.length / questions.length) * 100);
-  const question = questions[index];
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const total = session?.slides?.length ?? TOTAL_ASSESSMENT_QUESTIONS;
+  const progress = Math.round((choices.length / total) * 100);
+  const slide = session?.slides?.[index];
+
+  async function handleBegin() {
+    setLoading(true);
+    setError(null);
+    try {
+      const db = await getDatabase();
+      await ensureQuestionsSeeded(db);
+      persistAppDatabase(db);
+      const nextSession = await loadSharedAssessmentSession(db);
+      setSession(nextSession);
+      setStarted(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function finishWithChoices(next) {
+    if (!session) return;
+    const db = await getDatabase();
+    const badgeId = makeUserIdFromBadge(scannedBadgeValue);
+    const { dbUserId, oceanScores } = finalizeAssessment(db, {
+      badgeId,
+      assessmentId: session.assessmentId,
+      choices: next,
+      scoringSlides: session.scoringSlides,
+    });
+    const userId = badgeId;
+    const profile = {
+      userId,
+      name: makeDisplayNameFromBadge(userId),
+      badgeQrValue: scannedBadgeValue,
+      choices: next,
+      vibe: getVibeName(next, oceanScores),
+      oceanScores,
+      assessmentId: session.assessmentId,
+      dbUserId,
+      presentationIds: session.presentationIds,
+      createdAt: new Date().toISOString(),
+    };
+    saveStoredProfile(profile);
+    onDone(profile);
+  }
 
   function choose(value) {
     const next = [...choices, value];
-    if (next.length >= questions.length) {
-      const userId = makeUserIdFromBadge(scannedBadgeValue);
-      const profile = { userId, name: makeDisplayNameFromBadge(userId), badgeQrValue: scannedBadgeValue, choices: next, vibe: getVibeName(next), createdAt: new Date().toISOString() };
-      saveStoredProfile(profile);
-      onDone(profile);
+    if (!session) return;
+    if (next.length >= session.slides.length) {
+      void finishWithChoices(next);
       return;
     }
     setChoices(next);
@@ -347,20 +395,51 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
   if (!started) {
     const userId = makeUserIdFromBadge(scannedBadgeValue);
     return (
-      <AppShell><div className="mx-auto max-w-md"><TopBar title="Vibe test" subtitle="Eight quick image choices" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><Sparkles className="h-8 w-8" /></div><div><h2 className="text-3xl font-black tracking-tight">Badge linked</h2><p className="mt-3 leading-7 text-slate-300">Your event badge ID is ready. Now pick one image per question.</p></div><div className="rounded-2xl bg-slate-950 p-4 text-left"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">user_id</p><p className="mt-1 break-all font-mono text-sm text-white">{userId}</p></div><Button onClick={() => setStarted(true)} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600">Begin</Button></CardContent></Card></div></AppShell>
+      <AppShell>
+        <div className="mx-auto max-w-md">
+          <TopBar title="Vibe test" subtitle="Thirty quick image choices — six per OCEAN facet (scores 0–100 in steps of 20)" onBack={onBack} />
+          <Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white">
+            <CardContent className="space-y-5 p-5">
+              <div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><Sparkles className="h-8 w-8" /></div>
+              <div>
+                <h2 className="text-3xl font-black tracking-tight">Badge linked</h2>
+                <p className="mt-3 leading-7 text-slate-300">Everyone takes the same 30-question set (from the event test bank), in a fixed shuffled order stored in the app database. Six items per OCEAN facet; each facet score is one of <span className="font-mono text-indigo-200">0, 20, 40, 60, 80, 100</span>. Images live in <span className="font-mono text-indigo-200">/public/assessment/</span> as <span className="font-mono text-indigo-200">{"{id}_1.jpg"}</span> and <span className="font-mono text-indigo-200">{"{id}_2.jpg"}</span> using the original bank id for each question (see <span className="font-mono text-indigo-200">legacyImageIds.js</span>).</p>
+              </div>
+              <div className="rounded-2xl bg-slate-950 p-4 text-left">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">user_id</p>
+                <p className="mt-1 break-all font-mono text-sm text-white">{userId}</p>
+              </div>
+              {error && <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div>}
+              <Button onClick={() => void handleBegin()} disabled={loading} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600 disabled:opacity-60">{loading ? "Preparing…" : "Begin"}</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </AppShell>
     );
   }
 
+  if (!slide) {
+    return (
+      <AppShell>
+        <div className="mx-auto max-w-md text-center text-slate-300">
+          <TopBar title="Loading" subtitle="Starting assessment" onBack={onBack} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const prompt = ASSESSMENT_PROMPTS[index % ASSESSMENT_PROMPTS.length];
+
   return (
     <AppShell>
-      <TopBar title="Choose your vibe" subtitle={`Question ${index + 1} of ${questions.length}`} onBack={onBack} />
+      <TopBar title="Choose your vibe" subtitle={`Question ${index + 1} of ${total}`} onBack={onBack} />
       <div className="mb-5 h-3 overflow-hidden rounded-full bg-white/10"><motion.div className="h-full rounded-full bg-indigo-400" animate={{ width: `${progress}%` }} /></div>
       <AnimatePresence mode="wait">
-        <motion.div key={question.id} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.2 }}>
-          <h2 className="mx-auto mb-5 max-w-3xl text-2xl font-black leading-tight tracking-tight sm:text-3xl">{question.prompt}</h2>
+        <motion.div key={slide.presentationId} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.2 }}>
+          <h2 className="mx-auto mb-5 max-w-3xl text-2xl font-black leading-tight tracking-tight sm:text-3xl">{prompt}</h2>
           <div className="mx-auto grid max-w-4xl gap-4 md:grid-cols-2">
-            <ChoiceCard choice={question.left} onChoose={() => choose(question.left.value)} />
-            <ChoiceCard choice={question.right} onChoose={() => choose(question.right.value)} />
+            <ChoiceCard label="Left image" image={slide.leftSrc} onChoose={() => choose(0)} />
+            <ChoiceCard label="Right image" image={slide.rightSrc} onChoose={() => choose(1)} />
           </div>
         </motion.div>
       </AnimatePresence>
@@ -368,11 +447,11 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
   );
 }
 
-function ChoiceCard({ choice, onChoose }) {
+function ChoiceCard({ label, image, onChoose }) {
   return (
     <button onClick={onChoose} className="overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/10 text-left shadow-xl active:scale-[0.99]">
-      <img src={choice.image} alt={choice.label} className="h-44 w-full object-cover sm:h-56 lg:h-72" />
-      <div className="flex items-center justify-between gap-3 p-4"><p className="text-lg font-black text-white sm:text-xl">{choice.label}</p><div className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">Pick</div></div>
+      <AssessmentImage src={image} alt={label} className="h-44 w-full object-cover sm:h-56 lg:h-72" />
+      <div className="flex items-center justify-between gap-3 p-4"><p className="text-lg font-black text-white sm:text-xl">{label}</p><div className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">Pick</div></div>
     </button>
   );
 }
@@ -380,7 +459,7 @@ function ChoiceCard({ choice, onChoose }) {
 function ProfileScreen({ profile, onBack, onFind }) {
   if (!profile) return <AppShell><TopBar title="No profile yet" onBack={onBack} /></AppShell>;
   return (
-    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeCheck" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-5 gap-1">{Array.from({ length: 25 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="user_id" value={profile.userId} /><DataBox label="choices" value={`[${profile.choices.join(",")}]`} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
+    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeCheck" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-6 gap-1">{Array.from({ length: 30 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="user_id" value={profile.userId} />{profile.oceanScores && <DataBox label="O · C · E · A · N" value={`${profile.oceanScores.o} · ${profile.oceanScores.c} · ${profile.oceanScores.e} · ${profile.oceanScores.a} · ${profile.oceanScores.n}`} />}<DataBox label="choices" value={`[${profile.choices.join(",")}]`} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
   );
 }
 
@@ -406,7 +485,7 @@ function FindByNameScreen({ profile, onBack, onMatch }) {
 }
 
 function PersonRow({ person, profile, onClick }) {
-  const score = profile ? matchScore(profile.choices, person.choices) : null;
+  const score = profile ? listMatchPercent(profile, person) : null;
   return <button onClick={onClick} disabled={!profile} className="flex w-full items-center gap-4 rounded-[1.5rem] border border-white/10 bg-white/10 p-4 text-left shadow-lg disabled:opacity-60 active:scale-[0.99]"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-indigo-400/20 text-indigo-200"><UsersRound className="h-6 w-6" /></div><div className="min-w-0 flex-1"><p className="truncate font-black text-white">{person.name}</p><p className="truncate text-sm text-slate-300">{person.role} · {person.company}</p></div>{score !== null && <div className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">{score}%</div>}</button>;
 }
 
@@ -422,16 +501,107 @@ function ScanScreen({ profile, onBack, onMatch }) {
   );
 }
 
+const DYADIC_DIMENSIONS = [
+  ["flow", "Flow", "Pacing & coordination"],
+  ["depth", "Depth", "Intellectual / emotional richness"],
+  ["comfort", "Comfort", "Safety & ease"],
+  ["energy", "Energy", "Stimulation & activation"],
+  ["stability", "Stability", "Sustainability over time"],
+];
+
 function MatchScreen({ profile, person, onBack }) {
-  const score = matchScore(profile.choices, person.choices);
+  const useDyadic = canUseDyadicMatch(profile, person);
+  const dyadic = useDyadic
+    ? evaluateDyadicConversation(oceanScoresToProfile(profile.oceanScores), oceanScoresToProfile(person.oceanScores))
+    : null;
+  const choiceOverlap = matchScore(profile.choices, person.choices);
+  const headlineScore = useDyadic ? Math.round(dyadic.overall) : choiceOverlap;
   const details = getMatchDetails(profile.choices, person.choices);
+
   return (
-    <AppShell><div className="mx-auto max-w-md lg:max-w-3xl"><TopBar title="Your match" subtitle={`${profile.name} + ${person.name}`} onBack={onBack} /><Card className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent><div className="bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-6 text-center"><p className="text-sm font-bold uppercase tracking-[0.2em] text-white/70">Vibe match</p><div className="mt-3 text-7xl font-black">{score}%</div><p className="mt-2 text-lg font-bold">{getMatchText(score)}</p></div><div className="space-y-5 p-5"><div className="grid grid-cols-2 gap-3"><MiniProfile title="You" name={profile.name} vibe={profile.vibe} /><MiniProfile title="Them" name={person.name} vibe={person.vibe} /></div><InfoBlock title="Why you may click" items={details.similarities.length ? details.similarities : ["You have enough overlap to start comfortably."]} tone="green" /><InfoBlock title="Possible friction" items={details.differences.length ? details.differences : ["Very few obvious friction points from this simplified test."]} tone="orange" /><div className="rounded-2xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Suggested opener</p><p className="mt-2 text-lg font-black leading-7">“{person.opener}”</p></div><div className="rounded-2xl bg-white/5 p-4 text-xs leading-5 text-slate-400">Demo note: this is not psychological assessment. It is a lightweight event icebreaker built from binary image choices.</div></div></CardContent></Card></div></AppShell>
+    <AppShell>
+      <div className="mx-auto max-w-md lg:max-w-3xl">
+        <TopBar title="Your match" subtitle={`${profile.name} + ${person.name}`} onBack={onBack} />
+        <Card className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 text-white">
+          <CardContent>
+            <div className="bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-6 text-center">
+              <p className="text-sm font-bold uppercase tracking-[0.2em] text-white/70">{useDyadic ? "Conversation fit (OCEAN dyadic)" : "Image choice overlap"}</p>
+              <div className="mt-3 text-7xl font-black">{headlineScore}%</div>
+              <p className="mt-2 text-lg font-bold">{getMatchText(headlineScore)}</p>
+              {useDyadic && <p className="mt-2 text-xs leading-5 text-white/80">Heuristic model: similarity, dyadic averages, and nonlinear adjustments — not a validated instrument.</p>}
+            </div>
+            <div className="space-y-5 p-5">
+              <div className="grid grid-cols-2 gap-3">
+                <MiniProfile title="You" name={profile.name} vibe={profile.vibe} oceanScores={profile.oceanScores} />
+                <MiniProfile title="Them" name={person.name} vibe={person.vibe} oceanScores={person.oceanScores} />
+              </div>
+
+              {useDyadic && dyadic && (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/80 p-4">
+                  <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Dyadic dimensions</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {DYADIC_DIMENSIONS.map(([key, label, hint]) => (
+                      <div key={key} className="rounded-xl bg-white/5 px-3 py-2">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-sm font-black text-white">{label}</span>
+                          <span className="font-mono text-sm font-bold text-indigo-200">{dyadic[key]}%</span>
+                        </div>
+                        <p className="mt-0.5 text-xs text-slate-400">{hint}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-center font-mono text-sm text-slate-300">Overall (weighted): <span className="font-black text-white">{dyadic.overall}%</span></p>
+                </div>
+              )}
+
+              {useDyadic && (
+                <div className="rounded-2xl bg-white/5 px-4 py-3 text-center text-sm text-slate-300">
+                  Image choice overlap (same side picks): <span className="font-black text-white">{choiceOverlap}%</span>
+                </div>
+              )}
+
+              <InfoBlock
+                title="Why you may click"
+                items={details.similarities.length ? details.similarities : ["You have enough overlap to start comfortably."]}
+                tone="green"
+              />
+              <InfoBlock
+                title="Possible friction"
+                items={details.differences.length ? details.differences : ["Very few obvious friction points from this simplified test."]}
+                tone="orange"
+              />
+
+              <div className="rounded-2xl bg-slate-950 p-4">
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Suggested opener</p>
+                <p className="mt-2 text-lg font-black leading-7">“{person.opener}”</p>
+              </div>
+
+              <div className="rounded-2xl bg-white/5 p-4 text-xs leading-5 text-slate-400">
+                {useDyadic
+                  ? "When both people have OCEAN scores from the image test, the headline match uses the dyadic conversation model. Otherwise only choice overlap is shown."
+                  : "Complete the image assessment on both sides to unlock the OCEAN dyadic conversation scores. For now the headline uses image choice overlap only."}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </AppShell>
   );
 }
 
-function MiniProfile({ title, name, vibe }) {
-  return <div className="rounded-2xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{title}</p><p className="mt-1 truncate font-black">{name}</p><p className="mt-1 text-sm text-indigo-200">{vibe}</p></div>;
+function MiniProfile({ title, name, vibe, oceanScores }) {
+  return (
+    <div className="rounded-2xl bg-slate-950 p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{title}</p>
+      <p className="mt-1 truncate font-black">{name}</p>
+      <p className="mt-1 text-sm text-indigo-200">{vibe}</p>
+      {oceanScores && (
+        <p className="mt-2 font-mono text-[10px] leading-relaxed text-slate-400 sm:text-xs">
+          O {oceanScores.o} · C {oceanScores.c} · E {oceanScores.e} · A {oceanScores.a} · N {oceanScores.n}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function InfoBlock({ title, items, tone }) {
@@ -444,6 +614,24 @@ export default function App() {
   const [profile, setProfile] = useState(() => getStoredProfile());
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [scannedBadgeValue, setScannedBadgeValue] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await getDatabase();
+        if (cancelled) return;
+        await ensureQuestionsSeeded(db);
+        await ensureSharedAssessment(db);
+        persistAppDatabase(db);
+      } catch (err) {
+        console.warn("DB bootstrap failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function goHome() {
     setScreen("home");
