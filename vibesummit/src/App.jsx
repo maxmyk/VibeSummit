@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Camera, ChevronLeft, HeartHandshake, QrCode, Search, Sparkles, UserRound, UsersRound } from "lucide-react";
+import { Html5Qrcode } from "html5-qrcode";
 
 function Button({ children, className = "", ...props }) {
   return (
@@ -102,8 +103,43 @@ function makeUserIdFromBadge(scannedValue) {
   return clean || `badge_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function makeDisplayNameFromBadge(userId) {
-  return `Attendee ${userId.slice(-6).toUpperCase()}`;
+function getFriendlyBadgeId(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "UNKNOWN";
+
+  const parts = raw.split("|").map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) return parts[parts.length - 1];
+
+  return raw.slice(0, 8).toUpperCase();
+}
+
+const jokeNames = [
+  "The Best Investor",
+  "Fair Judge",
+  "Networking Wizard",
+  "Coffee-Powered Founder",
+  "Badge Scanner Supreme",
+  "Hallway Deal Maker",
+  "Pitch Deck Prophet",
+  "Wi-Fi Survivor",
+  "Snack Table Strategist",
+  "Panel Discussion Enjoyer",
+  "The Mysterious VC",
+  "Demo Day Champion",
+];
+
+function hashString(value) {
+  const text = String(value || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function makeDisplayNameFromBadge(rawValue) {
+  const index = hashString(rawValue) % jokeNames.length;
+  return jokeNames[index];
 }
 
 function getVibeName(choices) {
@@ -215,7 +251,7 @@ function HomeScreen({ profile, onStartTest, onScan, onFind, onProfile }) {
             <Card className="mb-4 rounded-[1.75rem] border border-white/10 bg-white/10 text-white">
               <CardContent className="flex items-center gap-3 p-4">
                 <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/20 text-emerald-300"><UserRound className="h-6 w-6" /></div>
-                <div className="min-w-0"><p className="truncate font-black">{profile.name}</p><p className="truncate text-sm text-slate-300">{profile.vibe} · {profile.userId}</p></div>
+                <div className="min-w-0"><p className="truncate font-black">{profile.name}</p><p className="truncate text-sm text-slate-300">{profile.vibe} · {profile.friendlyBadgeId || getFriendlyBadgeId(profile.badgeQrValue || profile.userId)}</p></div>
               </CardContent>
             </Card>
           )}
@@ -234,58 +270,82 @@ function HomeScreen({ profile, onStartTest, onScan, onFind, onProfile }) {
 }
 
 function QrScanner({ title, subtitle, onDetected, onBack }) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const detectorRef = useRef(null);
+  const scannerId = "vibecheck-qr-reader";
+  const scannerRef = useRef(null);
+  const hasDetectedRef = useRef(false);
   const [manualId, setManualId] = useState("");
   const [status, setStatus] = useState("Starting camera…");
-  const [cameraReady, setCameraReady] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
 
   useEffect(() => {
-    let stopped = false;
+    let mounted = true;
 
-    async function scanLoop() {
-      if (!videoRef.current || !detectorRef.current || stopped) return;
+    async function stopScanner() {
       try {
-        const codes = await detectorRef.current.detect(videoRef.current);
-        if (codes.length > 0) {
-          stopCamera();
-          onDetected(codes[0].rawValue);
+        if (scannerRef.current?.isScanning) {
+          await scannerRef.current.stop();
+        }
+        await scannerRef.current?.clear();
+      } catch {
+        // Ignore cleanup errors. They can happen if the camera was never started.
+      }
+    }
+
+    async function startScanner() {
+      try {
+        const scanner = new Html5Qrcode(scannerId, false);
+        scannerRef.current = scanner;
+
+        const cameras = await Html5Qrcode.getCameras();
+        if (!mounted) return;
+
+        if (!cameras || cameras.length === 0) {
+          setStatus("No camera found. Use the manual fallback for the demo.");
           return;
         }
-      } catch {}
-      rafRef.current = requestAnimationFrame(scanLoop);
-    }
 
-    function stopCamera() {
-      stopped = true;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
-    }
+        const backCamera = cameras.find((camera) =>
+          /back|rear|environment/i.test(camera.label)
+        );
+        const cameraId = backCamera?.id || cameras[0].id;
 
-    async function startCamera() {
-      if (!("BarcodeDetector" in window)) {
-        setStatus("This browser does not support built-in QR scanning. Use the manual fallback for the demo.");
-        return;
-      }
-      try {
-        detectorRef.current = new window.BarcodeDetector({ formats: ["qr_code"] });
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        if (stopped) return stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = stream;
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraReady(true);
+        await scanner.start(
+          cameraId,
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0,
+          },
+          async (decodedText) => {
+            if (hasDetectedRef.current) return;
+            hasDetectedRef.current = true;
+            setStatus("QR detected.");
+            await stopScanner();
+            onDetected(decodedText);
+          },
+          () => {
+            // Scan failures happen every frame when no QR is visible; no need to show them.
+          }
+        );
+
+        if (!mounted) {
+          await stopScanner();
+          return;
+        }
+
+        setIsScanning(true);
         setStatus("Looking for QR code…");
-        scanLoop();
-      } catch {
-        setStatus("Camera unavailable. Use the manual fallback for the demo.");
+      } catch (error) {
+        setStatus("Camera scanner could not start. Check camera permission or use manual fallback.");
       }
     }
 
-    startCamera();
-    return stopCamera;
+    startScanner();
+
+    return () => {
+      mounted = false;
+      stopScanner();
+    };
   }, [onDetected]);
 
   return (
@@ -295,20 +355,37 @@ function QrScanner({ title, subtitle, onDetected, onBack }) {
         <Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white">
           <CardContent className="space-y-5 p-5">
             <div className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950">
-              <video ref={videoRef} className="h-72 w-full object-cover" muted playsInline />
-              {!cameraReady && (
+              <div id={scannerId} className="min-h-72 w-full overflow-hidden rounded-[1.5rem] [&_video]:!h-72 [&_video]:!w-full [&_video]:!object-cover" />
+              {!isScanning && (
                 <div className="absolute inset-0 grid place-items-center bg-slate-950">
-                  <div className="text-center"><Camera className="mx-auto h-10 w-10 text-slate-400" /><p className="mt-3 font-black">Camera scanner</p><p className="mt-1 px-6 text-sm leading-6 text-slate-400">{status}</p></div>
+                  <div className="text-center">
+                    <Camera className="mx-auto h-10 w-10 text-slate-400" />
+                    <p className="mt-3 font-black">Camera scanner</p>
+                    <p className="mt-1 px-6 text-sm leading-6 text-slate-400">{status}</p>
+                  </div>
                 </div>
               )}
               <div className="pointer-events-none absolute inset-8 rounded-3xl border-4 border-white/70" />
             </div>
+
             <div className="rounded-2xl bg-slate-950 p-4 text-sm leading-6 text-slate-300">{status}</div>
+
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <p className="mb-2 text-sm font-bold text-slate-300">Fallback for demo/testing</p>
               <div className="flex gap-2">
-                <input value={manualId} onChange={(e) => setManualId(e.target.value)} className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-white outline-none focus:border-indigo-400" placeholder="Paste badge QR value" />
-                <Button onClick={() => manualId.trim() && onDetected(manualId)} disabled={!manualId.trim()} className="rounded-2xl bg-indigo-500 px-5 font-black text-white hover:bg-indigo-600">Use</Button>
+                <input
+                  value={manualId}
+                  onChange={(e) => setManualId(e.target.value)}
+                  className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-white outline-none focus:border-indigo-400"
+                  placeholder="Paste badge QR value"
+                />
+                <Button
+                  onClick={() => manualId.trim() && onDetected(manualId)}
+                  disabled={!manualId.trim()}
+                  className="rounded-2xl bg-indigo-500 px-5 font-black text-white hover:bg-indigo-600"
+                >
+                  Use
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -329,7 +406,15 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
     const next = [...choices, value];
     if (next.length >= questions.length) {
       const userId = makeUserIdFromBadge(scannedBadgeValue);
-      const profile = { userId, name: makeDisplayNameFromBadge(userId), badgeQrValue: scannedBadgeValue, choices: next, vibe: getVibeName(next), createdAt: new Date().toISOString() };
+      const profile = {
+        userId,
+        name: makeDisplayNameFromBadge(scannedBadgeValue),
+        badgeQrValue: scannedBadgeValue,
+        friendlyBadgeId: getFriendlyBadgeId(scannedBadgeValue),
+        choices: next,
+        vibe: getVibeName(next),
+        createdAt: new Date().toISOString(),
+      };
       saveStoredProfile(profile);
       onDone(profile);
       return;
@@ -340,14 +425,14 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
 
   if (!scannedBadgeValue) {
     return (
-      <AppShell><div className="mx-auto max-w-md"><TopBar title="Badge required" subtitle="Scan your event badge before starting" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><QrCode className="h-8 w-8" /></div><h2 className="text-3xl font-black tracking-tight">Start with your badge QR</h2><p className="leading-7 text-slate-300">The badge QR becomes your event user ID. After that, your vibe choices are saved under that ID.</p><Button onClick={onNeedScan} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600">Scan badge</Button></CardContent></Card></div></AppShell>
+      <AppShell><div className="mx-auto max-w-md"><TopBar title="Badge required" subtitle="Scan your event badge before starting" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><QrCode className="h-8 w-8" /></div><h2 className="text-3xl font-black tracking-tight">Start with your badge QR</h2><p className="leading-7 text-slate-300">Your badge QR links this test to your event profile. Your choices stay hidden from the public profile view.</p><Button onClick={onNeedScan} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600">Scan badge</Button></CardContent></Card></div></AppShell>
     );
   }
 
   if (!started) {
     const userId = makeUserIdFromBadge(scannedBadgeValue);
     return (
-      <AppShell><div className="mx-auto max-w-md"><TopBar title="Vibe test" subtitle="Eight quick image choices" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><Sparkles className="h-8 w-8" /></div><div><h2 className="text-3xl font-black tracking-tight">Badge linked</h2><p className="mt-3 leading-7 text-slate-300">Your event badge ID is ready. Now pick one image per question.</p></div><div className="rounded-2xl bg-slate-950 p-4 text-left"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">user_id</p><p className="mt-1 break-all font-mono text-sm text-white">{userId}</p></div><Button onClick={() => setStarted(true)} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600">Begin</Button></CardContent></Card></div></AppShell>
+      <AppShell><div className="mx-auto max-w-md"><TopBar title="Vibe test" subtitle="Eight quick image choices" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><div className="grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500"><Sparkles className="h-8 w-8" /></div><div><h2 className="text-3xl font-black tracking-tight">Badge linked</h2><p className="mt-3 leading-7 text-slate-300">Your event badge is linked. Now pick one image per question.</p></div><div className="rounded-2xl bg-slate-950 p-4 text-left"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">badge token</p><p className="mt-1 break-all font-mono text-sm text-white">{getFriendlyBadgeId(scannedBadgeValue)}</p></div><Button onClick={() => setStarted(true)} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600">Begin</Button></CardContent></Card></div></AppShell>
     );
   }
 
@@ -380,7 +465,7 @@ function ChoiceCard({ choice, onChoose }) {
 function ProfileScreen({ profile, onBack, onFind }) {
   if (!profile) return <AppShell><TopBar title="No profile yet" onBack={onBack} /></AppShell>;
   return (
-    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeCheck" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-5 gap-1">{Array.from({ length: 25 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="user_id" value={profile.userId} /><DataBox label="choices" value={`[${profile.choices.join(",")}]`} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
+    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeCheck" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-5 gap-1">{Array.from({ length: 25 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="badge token" value={profile.friendlyBadgeId || getFriendlyBadgeId(profile.badgeQrValue || profile.userId)} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
   );
 }
 
@@ -401,13 +486,66 @@ function FindByNameScreen({ profile, onBack, onMatch }) {
   }, [query]);
 
   return (
-    <AppShell><div className="mx-auto max-w-md lg:max-w-3xl"><TopBar title="Find by name" subtitle="Search sample attendees" onBack={onBack} />{!profile && <NeedProfileNotice />}<div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><Search className="h-5 w-5 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full bg-transparent text-white outline-none placeholder:text-slate-500" placeholder="Search Maya, founder, designer..." /></div><div className="grid gap-3 lg:grid-cols-2">{results.map((person) => <PersonRow key={person.userId} person={person} profile={profile} onClick={() => profile && onMatch(person)} />)}</div></div></AppShell>
+    <AppShell>
+      <div className="mx-auto w-full max-w-md lg:max-w-3xl">
+        <TopBar title="Find by name" subtitle="Search sample attendees" onBack={onBack} />
+        {!profile && <NeedProfileNotice />}
+
+        <div className="mb-4 flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+          <Search className="h-5 w-5 shrink-0 text-slate-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-slate-500"
+            placeholder="Search name, role..."
+          />
+        </div>
+
+        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+          {results.map((person) => (
+            <PersonRow key={person.userId} person={person} profile={profile} onClick={() => profile && onMatch(person)} />
+          ))}
+        </div>
+      </div>
+    </AppShell>
   );
 }
 
 function PersonRow({ person, profile, onClick }) {
   const score = profile ? matchScore(profile.choices, person.choices) : null;
-  return <button onClick={onClick} disabled={!profile} className="flex w-full items-center gap-4 rounded-[1.5rem] border border-white/10 bg-white/10 p-4 text-left shadow-lg disabled:opacity-60 active:scale-[0.99]"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-indigo-400/20 text-indigo-200"><UsersRound className="h-6 w-6" /></div><div className="min-w-0 flex-1"><p className="truncate font-black text-white">{person.name}</p><p className="truncate text-sm text-slate-300">{person.role} · {person.company}</p></div>{score !== null && <div className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">{score}%</div>}</button>;
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={!profile}
+      className="flex w-full min-w-0 items-center gap-3 rounded-[1.5rem] border border-white/10 bg-white/10 p-3 text-left shadow-lg disabled:opacity-60 active:scale-[0.99] sm:p-4"
+    >
+      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-indigo-400/20 text-indigo-200 sm:h-12 sm:w-12">
+        <UsersRound className="h-5 w-5 sm:h-6 sm:w-6" />
+      </div>
+
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <p className="truncate text-sm font-black text-white sm:text-base">
+          {person.name}
+        </p>
+        <p className="truncate text-xs text-slate-300 sm:text-sm">
+          {person.role}
+        </p>
+        <p className="truncate text-xs text-slate-500 sm:hidden">
+          {person.company}
+        </p>
+        <p className="hidden truncate text-sm text-slate-300 sm:block">
+          {person.role} · {person.company}
+        </p>
+      </div>
+
+      {score !== null && (
+        <div className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-950 sm:px-3 sm:text-sm">
+          {score}%
+        </div>
+      )}
+    </button>
+  );
 }
 
 function ScanScreen({ profile, onBack, onMatch }) {
