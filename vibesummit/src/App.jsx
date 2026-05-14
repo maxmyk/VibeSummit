@@ -26,50 +26,50 @@ const questions = [
   {
     id: 1,
     prompt: "What feels more like you at an event?",
-    left: { label: "Deep conversation", image: "https://placehold.co/800x520/111827/ffffff?text=Deep+Talk", value: 0 },
-    right: { label: "Meeting many people", image: "https://placehold.co/800x520/4f46e5/ffffff?text=Many+People", value: 1 },
+    left: { label: "Deep conversation", image: "https://images.unsplash.com/photo-1517048676732-d65bc937f952?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Meeting many people", image: "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 2,
     prompt: "Which room would you rather enter?",
-    left: { label: "Quiet workshop", image: "https://placehold.co/800x520/0f766e/ffffff?text=Workshop", value: 0 },
-    right: { label: "Busy mixer", image: "https://placehold.co/800x520/f97316/ffffff?text=Mixer", value: 1 },
+    left: { label: "Quiet workshop", image: "https://images.unsplash.com/photo-1556761175-b413da4baf72?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Busy mixer", image: "https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 3,
     prompt: "What kind of session catches your eye?",
-    left: { label: "Technical demo", image: "https://placehold.co/800x520/1e3a8a/ffffff?text=Demo", value: 0 },
-    right: { label: "Big vision talk", image: "https://placehold.co/800x520/7c3aed/ffffff?text=Vision", value: 1 },
+    left: { label: "Technical demo", image: "https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Big vision talk", image: "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 4,
     prompt: "How do you like to start conversations?",
-    left: { label: "With a clear topic", image: "https://placehold.co/800x520/334155/ffffff?text=Specific+Topic", value: 0 },
-    right: { label: "With open curiosity", image: "https://placehold.co/800x520/be123c/ffffff?text=Open+Curiosity", value: 1 },
+    left: { label: "With a clear topic", image: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "With open curiosity", image: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 5,
     prompt: "What sounds more energizing?",
-    left: { label: "Build something useful", image: "https://placehold.co/800x520/166534/ffffff?text=Build", value: 0 },
-    right: { label: "Explore something new", image: "https://placehold.co/800x520/0891b2/ffffff?text=Explore", value: 1 },
+    left: { label: "Build something useful", image: "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Explore something new", image: "https://images.unsplash.com/photo-1531058020387-3be344556be6?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 6,
     prompt: "Pick your preferred event rhythm.",
-    left: { label: "Planned schedule", image: "https://placehold.co/800x520/4338ca/ffffff?text=Planned", value: 0 },
-    right: { label: "Spontaneous flow", image: "https://placehold.co/800x520/db2777/ffffff?text=Spontaneous", value: 1 },
+    left: { label: "Planned schedule", image: "https://images.unsplash.com/photo-1506784983877-45594efa4cbe?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Spontaneous flow", image: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 7,
     prompt: "Which person do you click with faster?",
-    left: { label: "Practical problem-solver", image: "https://placehold.co/800x520/0f172a/ffffff?text=Practical", value: 0 },
-    right: { label: "Creative brainstormer", image: "https://placehold.co/800x520/a16207/ffffff?text=Creative", value: 1 },
+    left: { label: "Practical problem-solver", image: "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "Creative brainstormer", image: "https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
   {
     id: 8,
     prompt: "What do you usually notice first?",
-    left: { label: "How it works", image: "https://placehold.co/800x520/155e75/ffffff?text=Mechanism", value: 0 },
-    right: { label: "How it feels", image: "https://placehold.co/800x520/c2410c/ffffff?text=Feeling", value: 1 },
+    left: { label: "How it works", image: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80", value: 0 },
+    right: { label: "How it feels", image: "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=800&q=80", value: 1 },
   },
 ];
 
@@ -525,18 +525,10 @@ function PersonRow({ person, profile, onClick }) {
       </div>
 
       <div className="min-w-0 flex-1 overflow-hidden">
-        <p className="truncate text-sm font-black text-white sm:text-base">
-          {person.name}
-        </p>
-        <p className="truncate text-xs text-slate-300 sm:text-sm">
-          {person.role}
-        </p>
-        <p className="truncate text-xs text-slate-500 sm:hidden">
-          {person.company}
-        </p>
-        <p className="hidden truncate text-sm text-slate-300 sm:block">
-          {person.role} · {person.company}
-        </p>
+        <p className="truncate text-sm font-black text-white sm:text-base">{person.name}</p>
+        <p className="truncate text-xs text-slate-300 sm:text-sm">{person.role}</p>
+        <p className="truncate text-xs text-slate-500 sm:hidden">{person.company}</p>
+        <p className="hidden truncate text-sm text-slate-300 sm:block">{person.role} · {person.company}</p>
       </div>
 
       {score !== null && (
@@ -564,7 +556,17 @@ function MatchScreen({ profile, person, onBack }) {
   const score = matchScore(profile.choices, person.choices);
   const details = getMatchDetails(profile.choices, person.choices);
   return (
-    <AppShell><div className="mx-auto max-w-md lg:max-w-3xl"><TopBar title="Your match" subtitle={`${profile.name} + ${person.name}`} onBack={onBack} /><Card className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent><div className="bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-6 text-center"><p className="text-sm font-bold uppercase tracking-[0.2em] text-white/70">Vibe match</p><div className="mt-3 text-7xl font-black">{score}%</div><p className="mt-2 text-lg font-bold">{getMatchText(score)}</p></div><div className="space-y-5 p-5"><div className="grid grid-cols-2 gap-3"><MiniProfile title="You" name={profile.name} vibe={profile.vibe} /><MiniProfile title="Them" name={person.name} vibe={person.vibe} /></div><InfoBlock title="Why you may click" items={details.similarities.length ? details.similarities : ["You have enough overlap to start comfortably."]} tone="green" /><InfoBlock title="Possible friction" items={details.differences.length ? details.differences : ["Very few obvious friction points from this simplified test."]} tone="orange" /><div className="rounded-2xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Suggested opener</p><p className="mt-2 text-lg font-black leading-7">“{person.opener}”</p></div><div className="rounded-2xl bg-white/5 p-4 text-xs leading-5 text-slate-400">Demo note: this is not psychological assessment. It is a lightweight event icebreaker built from binary image choices.</div></div></CardContent></Card></div></AppShell>
+    <AppShell><div className="mx-auto max-w-md lg:max-w-3xl"><TopBar title="Your match" subtitle={`${profile.name} + ${person.name}`} onBack={onBack} /><Card className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent><div className="bg-gradient-to-br from-indigo-500 to-fuchsia-500 p-6 text-center"><p className="text-sm font-bold uppercase tracking-[0.2em] text-white/70">Vibe match</p><div className="mt-3 text-7xl font-black">{score}%</div><p className="mt-2 text-lg font-bold">{getMatchText(score)}</p></div><div className="space-y-5 p-5"><div className="grid grid-cols-2 gap-3"><MiniProfile title="You" name={profile.name} vibe={profile.vibe} /><MiniProfile title="Them" name={person.name} vibe={person.vibe} /></div>{details.similarities.length > 0 && (
+              <InfoBlock title="Why you may click" items={details.similarities} tone="green" />
+            )}<InfoBlock
+              title={details.similarities.length > 0 ? "Possible friction" : "Conversation contrast"}
+              items={
+                details.differences.length
+                  ? details.differences
+                  : ["Very few obvious friction points from this simplified test."]
+              }
+              tone="orange"
+            /><div className="rounded-2xl bg-slate-950 p-4"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Suggested opener</p><p className="mt-2 text-lg font-black leading-7">“{person.opener}”</p></div><div className="rounded-2xl bg-white/5 p-4 text-xs leading-5 text-slate-400">Demo note: this is not psychological assessment. It is a lightweight event icebreaker built from binary image choices.</div></div></CardContent></Card></div></AppShell>
   );
 }
 
