@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY AUTOINCREMENT,
   assessment_id INTEGER NOT NULL REFERENCES assessments (assessment_id),
   badge_id TEXT,
+  display_name TEXT,
   answers TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

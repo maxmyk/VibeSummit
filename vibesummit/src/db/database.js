@@ -25,7 +25,21 @@ export async function openDatabase(persisted) {
   const db = persisted?.byteLength ? new SQL.Database(persisted) : new SQL.Database();
   db.run("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA_SQL);
+  runMigrations(db);
   return db;
+}
+
+
+function runMigrations(db) {
+  try {
+    const info = db.exec("PRAGMA table_info(users)");
+    const columns = info?.[0]?.values?.map((row) => row[1]) || [];
+    if (!columns.includes("display_name")) {
+      db.run("ALTER TABLE users ADD COLUMN display_name TEXT");
+    }
+  } catch {
+    /* ignore migration errors; schema creation will cover fresh DBs */
+  }
 }
 
 /** @type {Promise<SqlDatabase> | undefined} */

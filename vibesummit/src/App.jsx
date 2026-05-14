@@ -5,6 +5,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import { ensureQuestionsSeeded, ensureSharedAssessment, finalizeAssessment, loadSharedAssessmentSession, TOTAL_ASSESSMENT_QUESTIONS, vibeLabelFromOcean } from "./assessment/index.js";
 import { canUseDyadicMatch, evaluateDyadicConversation, oceanScoresToProfile } from "./conversation/dyadicConversationModel.js";
 import { getDatabase, persistAppDatabase } from "./db/index.js";
+import { queryAll, queryOne } from "./assessment/sqliteUtil.js";
 
 function Button({ children, className = "", ...props }) {
   return (
@@ -33,19 +34,98 @@ const ASSESSMENT_PROMPTS = [
   "Which option fits your usual event energy?",
 ];
 
-function padChoicesToLength(arr, len = TOTAL_ASSESSMENT_QUESTIONS) {
-  const out = [];
-  for (let i = 0; i < len; i++) out.push(arr[i % arr.length]);
-  return out;
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed.map((v) => Number(v) ? 1 : 0) : [];
+  } catch {
+    return [];
+  }
 }
 
-const samplePeople = [
-  { userId: "u_maya_24", name: "Maya Chen", role: "Product Designer", company: "Early-stage startup", choices: padChoicesToLength([1, 1, 1, 1, 1, 1, 1, 1]), oceanScores: { o: 80, c: 45, e: 85, a: 78, n: 42 }, vibe: "Creative Connector", opener: "What’s one product experience here that actually impressed you?" },
-  { userId: "u_andre_18", name: "Andre Wilson", role: "Backend Developer", company: "Cloud tools company", choices: padChoicesToLength([0, 0, 0, 0, 0, 0, 0, 0]), oceanScores: { o: 42, c: 82, e: 28, a: 58, n: 35 }, vibe: "Practical Builder", opener: "What’s a technical problem you’ve seen solved well recently?" },
-  { userId: "u_sofia_31", name: "Sofia Martinez", role: "Data Analyst", company: "Climate analytics startup", choices: padChoicesToLength([0, 1, 0, 1, 0, 1, 0, 1]), oceanScores: { o: 62, c: 58, e: 52, a: 64, n: 48 }, vibe: "Curious Analyst", opener: "What data or trend here surprised you today?" },
-  { userId: "u_noah_45", name: "Noah Kim", role: "Founder", company: "AI meeting assistant", choices: padChoicesToLength([1, 1, 0, 1, 1, 1, 0, 1]), oceanScores: { o: 72, c: 52, e: 82, a: 66, n: 55 }, vibe: "Energetic Explorer", opener: "What are you building, and what made you start?" },
-  { userId: "u_ella_77", name: "Ella Thompson", role: "UX Researcher", company: "Design lab", choices: padChoicesToLength([0, 1, 1, 1, 1, 0, 1, 1]), oceanScores: { o: 76, c: 50, e: 54, a: 84, n: 46 }, vibe: "Empathetic Strategist", opener: "What kind of conversations are you hoping to have here?" },
-];
+function normalizeOceanScores(row) {
+  if (!row) return null;
+  return {
+    o: Math.round(Number(row.o_score ?? row.o ?? 0)),
+    c: Math.round(Number(row.c_score ?? row.c ?? 0)),
+    e: Math.round(Number(row.e_score ?? row.e ?? 0)),
+    a: Math.round(Number(row.a_score ?? row.a ?? 0)),
+    n: Math.round(Number(row.n_score ?? row.n ?? 0)),
+  };
+}
+
+function profileFromDbRow(row) {
+  const badgeId = String(row.badge_id || `db_user_${row.db_user_id || row.user_id}`);
+  const choices = parseJsonArray(row.answers);
+  const oceanScores = normalizeOceanScores(row);
+  const savedName = String(row.display_name || "").trim();
+  return {
+    userId: badgeId,
+    dbUserId: Number(row.db_user_id || row.user_id || 0),
+    name: savedName || makeDisplayNameFromBadge(badgeId),
+    badgeQrValue: badgeId,
+    friendlyBadgeId: getFriendlyBadgeId(badgeId),
+    choices,
+    vibe: getVibeName(choices, oceanScores),
+    oceanScores,
+    createdAt: row.created_at ? new Date(Number(row.created_at)).toISOString() : undefined,
+    updatedAt: row.updated_at ? new Date(Number(row.updated_at)).toISOString() : undefined,
+  };
+}
+
+async function loadProfilesFromDb() {
+  const db = await getDatabase();
+  const rows = queryAll(db, `
+    SELECT
+      u.user_id AS db_user_id,
+      u.badge_id,
+      u.display_name,
+      u.answers,
+      u.created_at,
+      u.updated_at,
+      v.o_score,
+      v.c_score,
+      v.e_score,
+      v.a_score,
+      v.n_score
+    FROM users u
+    JOIN user_vibe v ON v.user_id = u.user_id
+    WHERE u.badge_id IS NOT NULL AND TRIM(u.badge_id) <> ''
+    ORDER BY u.updated_at DESC, u.user_id DESC
+  `);
+
+  const latestByBadge = new Map();
+  for (const row of rows) {
+    const badgeId = String(row.badge_id || "");
+    if (!badgeId || latestByBadge.has(badgeId)) continue;
+    latestByBadge.set(badgeId, profileFromDbRow(row));
+  }
+  return Array.from(latestByBadge.values());
+}
+
+async function findProfileByBadgeId(badgeId) {
+  const db = await getDatabase();
+  const row = queryOne(db, `
+    SELECT
+      u.user_id AS db_user_id,
+      u.badge_id,
+      u.display_name,
+      u.answers,
+      u.created_at,
+      u.updated_at,
+      v.o_score,
+      v.c_score,
+      v.e_score,
+      v.a_score,
+      v.n_score
+    FROM users u
+    JOIN user_vibe v ON v.user_id = u.user_id
+    WHERE u.badge_id = ?
+    ORDER BY u.updated_at DESC, u.user_id DESC
+    LIMIT 1
+  `, [badgeId]);
+  return row ? profileFromDbRow(row) : null;
+}
 
 function getStoredProfile() {
   try {
@@ -73,8 +153,12 @@ function getFriendlyBadgeId(rawValue) {
   const raw = String(rawValue || "").trim();
   if (!raw) return "UNKNOWN";
 
-  const parts = raw.split("|").map((part) => part.trim()).filter(Boolean);
-  if (parts.length > 1) return parts[parts.length - 1];
+  const pipeParts = raw.split("|").map((part) => part.trim()).filter(Boolean);
+  if (pipeParts.length > 1) return pipeParts[pipeParts.length - 1];
+
+  const underscoreParts = raw.split("_").map((part) => part.trim()).filter(Boolean);
+  const lastPart = underscoreParts[underscoreParts.length - 1];
+  if (underscoreParts.length > 1 && /^[a-zA-Z0-9-]{4,16}$/.test(lastPart)) return lastPart;
 
   return raw.slice(0, 8).toUpperCase();
 }
@@ -146,29 +230,111 @@ function listMatchPercent(profile, person) {
   return matchScore(profile.choices, person.choices);
 }
 
-function getMatchDetails(myChoices, theirChoices) {
-  const labels = [
-    ["deep conversations", "many quick introductions"],
-    ["quiet workshops", "busy mixers"],
-    ["technical demos", "vision talks"],
-    ["clear conversation topics", "open-ended curiosity"],
-    ["building useful things", "exploring new things"],
-    ["planned schedules", "spontaneous flow"],
-    ["practical problem-solving", "creative brainstorming"],
-    ["how things work", "how things feel"],
-  ];
-  const max = Math.min(myChoices.length, theirChoices.length);
-  while (labels.length < max) {
-    const n = labels.length + 1;
-    labels.push([`image set A (item ${n})`, `image set B (item ${n})`]);
+function traitName(key) {
+  return {
+    o: "openness",
+    c: "planning style",
+    e: "social energy",
+    a: "collaboration warmth",
+    n: "intensity / stress style",
+  }[key];
+}
+
+function highTraitPhrase(key) {
+  return {
+    o: "likes novelty, ideas, and unusual conversations",
+    c: "prefers structure, follow-through, and clear plans",
+    e: "gets energy from active social interaction",
+    a: "tends to keep conversations warm and cooperative",
+    n: "may bring more urgency, sensitivity, or intensity into the room",
+  }[key];
+}
+
+function lowTraitPhrase(key) {
+  return {
+    o: "may prefer practical, concrete conversations over abstract exploration",
+    c: "may prefer flexibility over rigid plans",
+    e: "may prefer slower, quieter, one-on-one conversations",
+    a: "may communicate more directly or challenge ideas faster",
+    n: "may keep a calmer, steadier emotional pace",
+  }[key];
+}
+
+function strongestTrait(scores) {
+  return ["o", "c", "e", "a", "n"].sort((a, b) => scores[b] - scores[a])[0];
+}
+
+function largestTraitGap(a, b) {
+  return ["o", "c", "e", "a", "n"]
+    .map((key) => ({ key, gap: Math.abs(a[key] - b[key]), mine: a[key], theirs: b[key] }))
+    .sort((x, y) => y.gap - x.gap)[0];
+}
+
+function getDyadicNarrative(profile, person, dyadic) {
+  if (!profile?.oceanScores || !person?.oceanScores || !dyadic) {
+    return {
+      strengths: ["You have enough profile data to compare basic choice overlap."],
+      frictions: ["Ask one concrete opener first, then let the conversation reveal the real fit."],
+    };
   }
-  const similarities = [];
-  const differences = [];
-  for (let i = 0; i < max; i++) {
-    if (myChoices[i] === theirChoices[i]) similarities.push(`You both picked the same side on item ${i + 1}.`);
-    else differences.push(`On item ${i + 1}, you picked ${labels[i][myChoices[i]]}, while they leaned toward ${labels[i][theirChoices[i]]}.`);
+
+  const strengths = [];
+  const frictions = [];
+  const mine = profile.oceanScores;
+  const theirs = person.oceanScores;
+  const gap = largestTraitGap(mine, theirs);
+  const myStrong = strongestTrait(mine);
+  const theirStrong = strongestTrait(theirs);
+
+  if (dyadic.comfort >= 70) strengths.push("The conversation should feel fairly easy: the model sees good comfort and cooperation potential.");
+  if (dyadic.flow >= 70) strengths.push("Your social pacing should be reasonably aligned, so starting and sustaining a conversation may feel natural.");
+  if (dyadic.depth >= 70) strengths.push("There is strong potential for a deeper conversation rather than only small talk.");
+  if (dyadic.energy >= 70) strengths.push("This match may feel lively and energizing in a busy event environment.");
+  if (dyadic.stability >= 70) strengths.push("The interaction looks steady enough for practical follow-up after the event.");
+
+  if (strengths.length === 0) {
+    strengths.push(`Your strongest signal is ${traitName(myStrong)}: you ${highTraitPhrase(myStrong)}.`);
+    if (theirStrong !== myStrong) strengths.push(`Their strongest signal is ${traitName(theirStrong)}: they ${highTraitPhrase(theirStrong)}.`);
   }
-  return { similarities: similarities.slice(0, 2), differences: differences.slice(0, 2) };
+
+  if (gap.gap >= 40) {
+    const minePhrase = gap.mine >= gap.theirs ? highTraitPhrase(gap.key) : lowTraitPhrase(gap.key);
+    const theirPhrase = gap.theirs >= gap.mine ? highTraitPhrase(gap.key) : lowTraitPhrase(gap.key);
+    frictions.push(`Biggest contrast: ${traitName(gap.key)}. You ${minePhrase}; they ${theirPhrase}.`);
+  }
+  if (dyadic.flow < 55) frictions.push("Pacing may differ: one person may want more speed, energy, or spontaneity than the other.");
+  if (dyadic.comfort < 55) frictions.push("Comfort may need a softer opener. Start with a low-pressure question rather than a direct pitch.");
+  if (dyadic.energy < 55) frictions.push("Energy may be uneven, so a short focused conversation may work better than a long open-ended one.");
+
+  if (frictions.length === 0) frictions.push("No major friction signal stands out. Still, keep the first question simple and human.");
+
+  return { strengths: strengths.slice(0, 2), frictions: frictions.slice(0, 2) };
+}
+
+function getFallbackMatchDetails(myChoices, theirChoices) {
+  const len = Math.min(myChoices?.length || 0, theirChoices?.length || 0);
+  if (!len) {
+    return {
+      similarities: ["No shared assessment data is available yet."],
+      differences: ["Ask them what kind of conversations they are hoping to have today."],
+    };
+  }
+  let same = 0;
+  for (let i = 0; i < len; i++) if (myChoices[i] === theirChoices[i]) same++;
+  const pct = Math.round((same / len) * 100);
+  return {
+    similarities: pct >= 50 ? [`You chose the same side on ${same} of ${len} image prompts.`] : [],
+    differences: pct < 50 ? [`You chose different sides on ${len - same} of ${len} image prompts.`] : [],
+  };
+}
+
+function makeSuggestedOpener(person, dyadic) {
+  if (!dyadic) return "What kind of conversations are you hoping to have here today?";
+  if (dyadic.depth >= 70) return "What idea from this event has actually made you think?";
+  if (dyadic.energy >= 70) return "What’s been the most exciting thing you’ve seen here so far?";
+  if (dyadic.stability >= 70) return "What would make this event genuinely useful for you?";
+  if (dyadic.comfort < 55) return "What brought you to this event today?";
+  return `What kind of people are you hoping to meet today, ${person.name}?`;
 }
 
 function AppShell({ children }) {
@@ -287,7 +453,7 @@ function HomeScreen({ profile, onStartTest, onScan, onFind, onProfile }) {
 
           <div className="space-y-3">
             <BigActionButton icon={Camera} title="Scan attendee QR" description="Check match from a badge" onClick={onScan} />
-            <BigActionButton icon={Search} title="Find by name" description="Search sample attendees" onClick={onFind} />
+            <BigActionButton icon={Search} title="Find saved profile" description="Search profiles in the app database" onClick={onFind} />
             <BigActionButton icon={Sparkles} title={profile ? "Rescan badge & retake test" : "Scan badge & start test"} description="Use your event badge ID first" onClick={onStartTest} primary />
             {profile && <BigActionButton icon={QrCode} title="Show my profile" description="View your badge ID and choices" onClick={onProfile} />}
           </div>
@@ -444,6 +610,7 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
   const [index, setIndex] = useState(0);
   const [choices, setChoices] = useState([]);
   const [started, setStarted] = useState(false);
+  const [displayName, setDisplayName] = useState("");
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -473,8 +640,10 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
     if (!session) return;
     const db = await getDatabase();
     const badgeId = makeUserIdFromBadge(scannedBadgeValue);
+    const cleanDisplayName = displayName.trim();
     const { dbUserId, oceanScores } = finalizeAssessment(db, {
       badgeId,
+      displayName: cleanDisplayName,
       assessmentId: session.assessmentId,
       choices: next,
       scoringSlides: session.scoringSlides,
@@ -482,7 +651,7 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
     const userId = badgeId;
     const profile = {
       userId,
-      name: makeDisplayNameFromBadge(userId),
+      name: cleanDisplayName || makeDisplayNameFromBadge(scannedBadgeValue),
       badgeQrValue: scannedBadgeValue,
       friendlyBadgeId: getFriendlyBadgeId(scannedBadgeValue),
       choices: next,
@@ -528,14 +697,21 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
               <div>
                 <h2 className="text-3xl font-black tracking-tight">Badge linked</h2>
                 <p className="mt-3 leading-7 text-slate-300">
-                  Everyone takes the same 30-question set (from the event test bank), in a fixed shuffled order stored in the app database. Six items per OCEAN facet; each facet score is one of{" "}
-                  <span className="font-mono text-indigo-200">0, 20, 40, 60, 80, 100</span>. Images live in <span className="font-mono text-indigo-200">/public/assessment/</span> as{" "}
-                  <span className="font-mono text-indigo-200">{"{id}_1.jpg"}</span> and <span className="font-mono text-indigo-200">{"{id}_2.jpg"}</span> using the original bank id for each question (see{" "}
-                  <span className="font-mono text-indigo-200">legacyImageIds.js</span>).
+                  Everyone takes the same short visual test. Your badge token links the result to your event profile, while the internal score details stay hidden from the public profile view.
                 </p>
               </div>
-              <DataBox label="user_id" value={userId} />
               <DataBox label="badge token" value={getFriendlyBadgeId(scannedBadgeValue)} />
+              <label className="block text-left">
+                <span className="mb-2 block text-sm font-bold text-slate-300">Your name <span className="font-normal text-slate-500">(optional)</span></span>
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-4 text-white outline-none placeholder:text-slate-500 focus:border-indigo-400"
+                  placeholder="e.g. Max"
+                  maxLength={40}
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-500">This is only used so other testers can find you by name. You can leave it blank and use a fun generated name.</p>
+              </label>
               {error && <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div>}
               <Button onClick={() => void handleBegin()} disabled={loading} className="w-full rounded-2xl bg-indigo-500 py-6 text-base font-black text-white hover:bg-indigo-600 disabled:opacity-60">
                 {loading ? "Preparing…" : "Begin"}
@@ -605,11 +781,6 @@ function ProfileScreen({ profile, onBack, onFind }) {
               <p className="mt-1 text-indigo-200">{profile.vibe}</p>
             </div>
             <DataBox label="badge token" value={profile.friendlyBadgeId || getFriendlyBadgeId(profile.badgeQrValue || profile.userId)} />
-            <DataBox label="user_id" value={profile.userId} />
-            {profile.oceanScores && (
-              <DataBox label="O · C · E · A · N" value={`${profile.oceanScores.o} · ${profile.oceanScores.c} · ${profile.oceanScores.e} · ${profile.oceanScores.a} · ${profile.oceanScores.n}`} />
-            )}
-            <DataBox label="choices" value={`[${profile.choices.join(",")}]`} />
             <Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">
               Find a match
             </Button>
@@ -630,16 +801,37 @@ function NeedProfileNotice() {
 
 function FindByNameScreen({ profile, onBack, onMatch }) {
   const [query, setQuery] = useState("");
+  const [people, setPeople] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  async function refreshPeople() {
+    setLoading(true);
+    setError(null);
+    try {
+      const loaded = await loadProfilesFromDb();
+      setPeople(loaded.filter((p) => p.userId !== profile?.userId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshPeople();
+  }, [profile?.userId]);
+
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return samplePeople;
-    return samplePeople.filter((p) => `${p.name} ${p.role} ${p.company} ${p.userId}`.toLowerCase().includes(q));
-  }, [query]);
+    if (!q) return people;
+    return people.filter((p) => `${p.name} ${p.vibe} ${p.friendlyBadgeId} ${p.userId}`.toLowerCase().includes(q));
+  }, [query, people]);
 
   return (
     <AppShell>
       <div className="mx-auto w-full max-w-md lg:max-w-3xl">
-        <TopBar title="Find by name" subtitle="Search sample attendees" onBack={onBack} />
+        <TopBar title="Find a saved profile" subtitle="Search people who completed the test on this device" onBack={onBack} />
         {!profile && <NeedProfileNotice />}
 
         <div className="mb-4 flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
@@ -648,13 +840,25 @@ function FindByNameScreen({ profile, onBack, onMatch }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-slate-500"
-            placeholder="Search name, role..."
+            placeholder="Search badge token or vibe..."
           />
         </div>
 
+        <div className="mb-4 rounded-2xl bg-white/5 p-4 text-sm leading-6 text-slate-300">
+          Profiles are loaded from the app database. For a live multi-device demo, this same shape should be backed by the deployed API/database.
+        </div>
+
+        {loading && <div className="rounded-2xl bg-white/10 p-4 text-slate-300">Loading saved profiles…</div>}
+        {error && <div className="rounded-2xl bg-rose-500/10 p-4 text-rose-200">{error}</div>}
+        {!loading && !error && results.length === 0 && (
+          <div className="rounded-2xl bg-amber-500/10 p-4 text-sm leading-6 text-amber-100">
+            No other saved profiles found yet. Scan another badge and complete the test on this device, or connect this screen to the hosted backend.
+          </div>
+        )}
+
         <div className="grid min-w-0 gap-3 lg:grid-cols-2">
           {results.map((person) => (
-            <PersonRow key={person.userId} person={person} profile={profile} onClick={() => profile && onMatch(person)} />
+            <PersonRow key={`${person.userId}-${person.dbUserId || "latest"}`} person={person} profile={profile} onClick={() => profile && onMatch(person)} />
           ))}
         </div>
       </div>
@@ -677,11 +881,8 @@ function PersonRow({ person, profile, onClick }) {
 
       <div className="min-w-0 flex-1 overflow-hidden">
         <p className="truncate text-sm font-black text-white sm:text-base">{person.name}</p>
-        <p className="truncate text-xs text-slate-300 sm:text-sm">{person.role}</p>
-        <p className="truncate text-xs text-slate-500 sm:hidden">{person.company}</p>
-        <p className="hidden truncate text-sm text-slate-300 sm:block">
-          {person.role} · {person.company}
-        </p>
+        <p className="truncate text-xs text-slate-300 sm:text-sm">{person.vibe}</p>
+        <p className="truncate font-mono text-xs text-slate-500">{person.friendlyBadgeId || getFriendlyBadgeId(person.userId)}</p>
       </div>
 
       {score !== null && (
@@ -695,13 +896,62 @@ function PersonRow({ person, profile, onClick }) {
 
 function ScanScreen({ profile, onBack, onMatch }) {
   const [scannedValue, setScannedValue] = useState(null);
+  const [found, setFound] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const scannedId = scannedValue ? makeUserIdFromBadge(scannedValue) : "";
-  const found = scannedValue ? samplePeople.find((p) => p.userId.toLowerCase() === scannedId.toLowerCase() || p.userId.toLowerCase() === String(scannedValue).trim().toLowerCase()) : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!scannedValue) return;
+    setLoading(true);
+    setError(null);
+    setFound(null);
+    (async () => {
+      try {
+        const person = await findProfileByBadgeId(scannedId);
+        if (!cancelled) setFound(person);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scannedValue, scannedId]);
 
   if (!scannedValue) return <QrScanner title="Scan attendee QR" subtitle="Scan someone’s badge to check match" onBack={onBack} onDetected={setScannedValue} />;
 
   return (
-    <AppShell><div className="mx-auto max-w-md"><TopBar title="QR detected" subtitle="Check this attendee match" onBack={() => setScannedValue(null)} />{!profile && <NeedProfileNotice />}<Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5"><DataBox label="scanned value" value={scannedValue} /><DataBox label="normalized user_id" value={scannedId} />{found ? <div className="rounded-2xl bg-slate-950 p-4"><p className="font-black">{found.name}</p><p className="text-sm text-slate-400">{found.role} · {found.company}</p></div> : <div className="rounded-2xl bg-rose-500/10 p-4 text-rose-200">This badge ID was scanned, but it is not in the sample attendee data yet.</div>}<Button onClick={() => found && profile && onMatch(found)} disabled={!found || !profile} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600 disabled:opacity-50">Show match</Button><Button onClick={() => setScannedValue(null)} className="w-full rounded-2xl bg-white/10 py-6 font-black text-white hover:bg-white/20">Scan again</Button></CardContent></Card></div></AppShell>
+    <AppShell>
+      <div className="mx-auto max-w-md">
+        <TopBar title="QR detected" subtitle="Checking saved profiles" onBack={() => setScannedValue(null)} />
+        {!profile && <NeedProfileNotice />}
+        <Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white">
+          <CardContent className="space-y-5 p-5">
+            <DataBox label="badge token" value={getFriendlyBadgeId(scannedValue)} />
+
+            {loading && <div className="rounded-2xl bg-slate-950 p-4 text-slate-300">Looking up this badge in the app database…</div>}
+            {error && <div className="rounded-2xl bg-rose-500/10 p-4 text-rose-200">{error}</div>}
+            {!loading && !error && found && (
+              <div className="rounded-2xl bg-slate-950 p-4">
+                <p className="font-black">{found.name}</p>
+                <p className="text-sm text-indigo-200">{found.vibe}</p>
+                <p className="mt-1 font-mono text-xs text-slate-500">{found.friendlyBadgeId}</p>
+              </div>
+            )}
+            {!loading && !error && !found && (
+              <div className="rounded-2xl bg-rose-500/10 p-4 text-sm leading-6 text-rose-200">
+                This badge was scanned, but no completed test for it exists in the app database yet. Ask them to complete the test first.
+              </div>
+            )}
+
+            <Button onClick={() => found && profile && onMatch(found)} disabled={!found || !profile} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600 disabled:opacity-50">Show match</Button>
+            <Button onClick={() => setScannedValue(null)} className="w-full rounded-2xl bg-white/10 py-6 font-black text-white hover:bg-white/20">Scan again</Button>
+          </CardContent>
+        </Card>
+      </div>
+    </AppShell>
   );
 }
 
@@ -720,7 +970,8 @@ function MatchScreen({ profile, person, onBack }) {
     : null;
   const choiceOverlap = matchScore(profile.choices, person.choices);
   const headlineScore = useDyadic ? Math.round(dyadic.overall) : choiceOverlap;
-  const details = getMatchDetails(profile.choices, person.choices);
+  const fallbackDetails = getFallbackMatchDetails(profile.choices, person.choices);
+  const narrative = useDyadic ? getDyadicNarrative(profile, person, dyadic) : null;
 
   return (
     <AppShell>
@@ -768,18 +1019,18 @@ function MatchScreen({ profile, person, onBack }) {
 
               <InfoBlock
                 title="Why you may click"
-                items={details.similarities.length ? details.similarities : ["You have enough overlap to start comfortably."]}
+                items={useDyadic ? narrative.strengths : (fallbackDetails.similarities.length ? fallbackDetails.similarities : ["The profiles are different, so start with a neutral, low-pressure opener."])}
                 tone="green"
               />
               <InfoBlock
-                title="Possible friction"
-                items={details.differences.length ? details.differences : ["Very few obvious friction points from this simplified test."]}
+                title={useDyadic ? "Possible friction" : "Conversation contrast"}
+                items={useDyadic ? narrative.frictions : (fallbackDetails.differences.length ? fallbackDetails.differences : ["Very few obvious friction points from this simplified test."])}
                 tone="orange"
               />
 
               <div className="rounded-2xl bg-slate-950 p-4">
                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Suggested opener</p>
-                <p className="mt-2 text-lg font-black leading-7">“{person.opener}”</p>
+                <p className="mt-2 text-lg font-black leading-7">“{makeSuggestedOpener(person, dyadic)}”</p>
               </div>
 
               <div className="rounded-2xl bg-white/5 p-4 text-xs leading-5 text-slate-400">
@@ -802,9 +1053,7 @@ function MiniProfile({ title, name, vibe, oceanScores }) {
       <p className="mt-1 truncate font-black">{name}</p>
       <p className="mt-1 text-sm text-indigo-200">{vibe}</p>
       {oceanScores && (
-        <p className="mt-2 font-mono text-[10px] leading-relaxed text-slate-400 sm:text-xs">
-          O {oceanScores.o} · C {oceanScores.c} · E {oceanScores.e} · A {oceanScores.a} · N {oceanScores.n}
-        </p>
+        <p className="mt-2 text-xs leading-relaxed text-slate-400">Profile completed</p>
       )}
     </div>
   );

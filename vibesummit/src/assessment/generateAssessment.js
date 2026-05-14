@@ -45,17 +45,18 @@ export function buildSlidesFromPresentationIds(db, presentationIds) {
 
 /**
  * @param {import("sql.js").Database} db
- * @param {{ badgeId: string, assessmentId: number, choices: (0|1)[], scoringSlides: import("./scoring.js").ScoringSlide[] }} args
+ * @param {{ badgeId: string, displayName?: string, assessmentId: number, choices: (0|1)[], scoringSlides: import("./scoring.js").ScoringSlide[] }} args
  * @returns {{ dbUserId: number, oceanScores: { o: number, c: number, e: number, a: number, n: number } }}
  */
-export function finalizeAssessment(db, { badgeId, assessmentId, choices, scoringSlides }) {
+export function finalizeAssessment(db, { badgeId, displayName = "", assessmentId, choices, scoringSlides }) {
   const ts = nowMs();
   const oceanScores = computeOceanScores(scoringSlides, choices);
 
   db.run("BEGIN");
-  db.run("INSERT INTO users (assessment_id, badge_id, answers, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", [
+  db.run("INSERT INTO users (assessment_id, badge_id, display_name, answers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", [
     assessmentId,
     badgeId,
+    String(displayName || "").trim(),
     JSON.stringify(choices),
     ts,
     ts,
