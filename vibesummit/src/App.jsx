@@ -192,9 +192,55 @@ function AppShell({ children }) {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <div className="mx-auto min-h-screen max-w-5xl bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-4 py-5 shadow-2xl sm:px-6 lg:px-8">
-        {children}
+        <div className="min-h-[calc(100vh-132px)]">{children}</div>
+        <CreditsFooter />
       </div>
     </div>
+  );
+}
+
+function CreditsFooter() {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <footer className="mt-8 text-xs leading-5 text-slate-400">
+      <button
+        type="button"
+        onClick={() => setIsOpen((value) => !value)}
+        className="mx-auto flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 font-bold uppercase tracking-[0.18em] text-slate-300 backdrop-blur transition hover:bg-white/10 active:scale-95"
+      >
+        Credits {isOpen ? "−" : "+"}
+      </button>
+
+      {isOpen && (
+        <div className="mt-3 rounded-[1.75rem] border border-white/10 bg-white/[0.06] p-4 backdrop-blur sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="font-black uppercase tracking-[0.18em] text-slate-300">Credits</p>
+              <p className="mt-2">
+                Built by{" "}
+                <a className="text-indigo-200 underline decoration-indigo-300/50 underline-offset-4" href="https://github.com/ashulikov" target="_blank" rel="noreferrer">
+                  Arsenii Shulikov
+                </a>{" "}
+                &{" "}
+                <a className="text-indigo-200 underline decoration-indigo-300/50 underline-offset-4" href="https://github.com/maxmyk" target="_blank" rel="noreferrer">
+                  Maksym Mykhasyuta
+                </a>{" "}
+                for the Web Summit Vancouver hackathon. AI pair-programming support by ChatGPT.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:max-w-md sm:text-right">
+              <p>
+                <span className="font-bold text-slate-300">Tech:</span> React, Vite, Tailwind CSS, Framer Motion, Lucide React, html5-qrcode, LocalStorage.
+              </p>
+              <p>
+                <span className="font-bold text-slate-300">Images:</span> demo stock photos loaded from Unsplash image CDN.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </footer>
   );
 }
 
@@ -242,7 +288,7 @@ function HomeScreen({ profile, onStartTest, onScan, onFind, onProfile }) {
             <div className="mb-5 grid h-16 w-16 place-items-center rounded-3xl bg-indigo-500 text-white shadow-lg shadow-indigo-500/30">
               <HeartHandshake className="h-8 w-8" />
             </div>
-            <h1 className="text-5xl font-black tracking-tight sm:text-6xl">VibeCheck</h1>
+            <h1 className="text-5xl font-black tracking-tight sm:text-6xl">VibeSummit</h1>
             <p className="mt-4 text-lg leading-7 text-slate-200">Meet people you’ll actually enjoy talking to at live events.</p>
             <p className="mt-3 text-sm leading-6 text-slate-400">Match by conversation style, energy, and event goals — not just title or company.</p>
           </div>
@@ -465,7 +511,7 @@ function ChoiceCard({ choice, onChoose }) {
 function ProfileScreen({ profile, onBack, onFind }) {
   if (!profile) return <AppShell><TopBar title="No profile yet" onBack={onBack} /></AppShell>;
   return (
-    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeCheck" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-5 gap-1">{Array.from({ length: 25 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="badge token" value={profile.friendlyBadgeId || getFriendlyBadgeId(profile.badgeQrValue || profile.userId)} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
+    <AppShell><div className="mx-auto max-w-md"><TopBar title="Your VibeSummit" subtitle="Share this badge ID" onBack={onBack} /><Card className="rounded-[2rem] border border-white/10 bg-white/10 text-white"><CardContent className="space-y-5 p-5 text-center"><div className="mx-auto grid h-36 w-36 place-items-center rounded-3xl border-4 border-slate-950 bg-white text-slate-950 shadow-xl"><div className="grid grid-cols-5 gap-1">{Array.from({ length: 25 }).map((_, i) => <div key={i} className={`h-3 w-3 ${((i * 7 + profile.userId.length) % 3) ? "bg-slate-950" : "bg-white"}`} />)}</div></div><div><h2 className="text-3xl font-black">{profile.name}</h2><p className="mt-1 text-indigo-200">{profile.vibe}</p></div><DataBox label="badge token" value={profile.friendlyBadgeId || getFriendlyBadgeId(profile.badgeQrValue || profile.userId)} /><Button onClick={onFind} className="w-full rounded-2xl bg-indigo-500 py-6 font-black text-white hover:bg-indigo-600">Find a match</Button></CardContent></Card></div></AppShell>
   );
 }
 
@@ -601,7 +647,7 @@ export default function App() {
   }
 
   if (screen === "badge-scan") {
-    return <QrScanner title="Scan your badge" subtitle="Your badge QR becomes your VibeCheck ID" onBack={goHome} onDetected={(value) => { setScannedBadgeValue(value); setScreen("test"); }} />;
+    return <QrScanner title="Scan your badge" subtitle="Your badge QR becomes your VibeSummit ID" onBack={goHome} onDetected={(value) => { setScannedBadgeValue(value); setScreen("test"); }} />;
   }
 
   if (screen === "test") {
