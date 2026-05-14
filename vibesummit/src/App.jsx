@@ -73,7 +73,67 @@ function profileFromDbRow(row) {
   };
 }
 
+const API_BASE_URL = String(import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
+function hasSharedBackend() {
+  return Boolean(API_BASE_URL);
+}
+
+function profileFromApiRow(row) {
+  const choices = Array.isArray(row?.choices) ? row.choices.map((v) => Number(v) ? 1 : 0) : [];
+  const oceanScores = row?.oceanScores ? normalizeOceanScores(row.oceanScores) : null;
+  const badgeId = String(row?.userId || row?.badgeQrValue || "");
+  return {
+    userId: badgeId,
+    name: String(row?.name || "").trim() || makeDisplayNameFromBadge(badgeId),
+    badgeQrValue: String(row?.badgeQrValue || badgeId),
+    friendlyBadgeId: String(row?.friendlyBadgeId || getFriendlyBadgeId(row?.badgeQrValue || badgeId)),
+    choices,
+    vibe: String(row?.vibe || getVibeName(choices, oceanScores)),
+    oceanScores,
+    createdAt: row?.createdAt,
+    updatedAt: row?.updatedAt,
+    source: "backend",
+  };
+}
+
+async function fetchJson(path, options = {}) {
+  if (!API_BASE_URL) throw new Error("VITE_API_URL is not configured");
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    // Ignore non-JSON errors.
+  }
+
+  if (!response.ok) {
+    throw new Error(body?.error || `Backend request failed (${response.status})`);
+  }
+  return body;
+}
+
+async function saveProfileToBackend(profile) {
+  if (!hasSharedBackend()) return { skipped: true };
+  return fetchJson("/api/profiles", {
+    method: "POST",
+    body: JSON.stringify(profile),
+  });
+}
+
 async function loadProfilesFromDb() {
+  if (hasSharedBackend()) {
+    const data = await fetchJson("/api/profiles");
+    return (data.profiles || []).map(profileFromApiRow);
+  }
+
   const db = await getDatabase();
   const rows = queryAll(db, `
     SELECT
@@ -104,6 +164,16 @@ async function loadProfilesFromDb() {
 }
 
 async function findProfileByBadgeId(badgeId) {
+  if (hasSharedBackend()) {
+    try {
+      const data = await fetchJson(`/api/profiles/${encodeURIComponent(badgeId)}`);
+      return data.profile ? profileFromApiRow(data.profile) : null;
+    } catch (error) {
+      if (String(error?.message || "").toLowerCase().includes("not found")) return null;
+      throw error;
+    }
+  }
+
   const db = await getDatabase();
   const row = queryOne(db, `
     SELECT
@@ -453,7 +523,7 @@ function HomeScreen({ profile, onStartTest, onScan, onFind, onProfile }) {
 
           <div className="space-y-3">
             <BigActionButton icon={Camera} title="Scan attendee QR" description="Check match from a badge" onClick={onScan} />
-            <BigActionButton icon={Search} title="Find saved profile" description="Search profiles in the app database" onClick={onFind} />
+            <BigActionButton icon={Search} title="Find people" description="Search shared profiles" onClick={onFind} />
             <BigActionButton icon={Sparkles} title={profile ? "Rescan badge & retake test" : "Scan badge & start test"} description="Use your event badge ID first" onClick={onStartTest} primary />
             {profile && <BigActionButton icon={QrCode} title="Show my profile" description="View your badge ID and choices" onClick={onProfile} />}
           </div>
@@ -663,6 +733,11 @@ function TestScreen({ scannedBadgeValue, onDone, onBack, onNeedScan }) {
       createdAt: new Date().toISOString(),
     };
     saveStoredProfile(profile);
+    try {
+      await saveProfileToBackend(profile);
+    } catch (error) {
+      console.warn("Backend profile save failed", error);
+    }
     onDone(profile);
   }
 
@@ -831,7 +906,7 @@ function FindByNameScreen({ profile, onBack, onMatch }) {
   return (
     <AppShell>
       <div className="mx-auto w-full max-w-md lg:max-w-3xl">
-        <TopBar title="Find a saved profile" subtitle="Search people who completed the test on this device" onBack={onBack} />
+        <TopBar title="Find a saved profile" subtitle="Search people who completed the test" onBack={onBack} />
         {!profile && <NeedProfileNotice />}
 
         <div className="mb-4 flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
@@ -845,14 +920,16 @@ function FindByNameScreen({ profile, onBack, onMatch }) {
         </div>
 
         <div className="mb-4 rounded-2xl bg-white/5 p-4 text-sm leading-6 text-slate-300">
-          Profiles are loaded from the app database. For a live multi-device demo, this same shape should be backed by the deployed API/database.
+          {hasSharedBackend()
+            ? "Profiles are loaded from the shared backend, so other phones can appear here after completing the test."
+            : "Profiles are only stored on this device because VITE_API_URL is not configured. Deploy/connect the backend for multi-device matching."}
         </div>
 
         {loading && <div className="rounded-2xl bg-white/10 p-4 text-slate-300">Loading saved profiles…</div>}
         {error && <div className="rounded-2xl bg-rose-500/10 p-4 text-rose-200">{error}</div>}
         {!loading && !error && results.length === 0 && (
           <div className="rounded-2xl bg-amber-500/10 p-4 text-sm leading-6 text-amber-100">
-            No other saved profiles found yet. Scan another badge and complete the test on this device, or connect this screen to the hosted backend.
+            No other saved profiles found yet. Ask another attendee to scan their badge and complete the test, then refresh this screen.
           </div>
         )}
 
@@ -931,7 +1008,7 @@ function ScanScreen({ profile, onBack, onMatch }) {
           <CardContent className="space-y-5 p-5">
             <DataBox label="badge token" value={getFriendlyBadgeId(scannedValue)} />
 
-            {loading && <div className="rounded-2xl bg-slate-950 p-4 text-slate-300">Looking up this badge in the app database…</div>}
+            {loading && <div className="rounded-2xl bg-slate-950 p-4 text-slate-300">Looking up this badge in the shared profiles…</div>}
             {error && <div className="rounded-2xl bg-rose-500/10 p-4 text-rose-200">{error}</div>}
             {!loading && !error && found && (
               <div className="rounded-2xl bg-slate-950 p-4">
@@ -942,7 +1019,7 @@ function ScanScreen({ profile, onBack, onMatch }) {
             )}
             {!loading && !error && !found && (
               <div className="rounded-2xl bg-rose-500/10 p-4 text-sm leading-6 text-rose-200">
-                This badge was scanned, but no completed test for it exists in the app database yet. Ask them to complete the test first.
+                This badge was scanned, but no completed test exists for it yet. Ask them to complete the test first.
               </div>
             )}
 
