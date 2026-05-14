@@ -8,9 +8,15 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "profiles.json");
 
+// CORS: keep this permissive for the hackathon demo because the frontend and
+// backend are deployed as separate services and Render env values can easily
+// differ by a trailing slash. This allows the browser preflight request to pass.
 app.use(cors({
-  origin: process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",").map((x) => x.trim()) : "*",
+  origin: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 }));
+app.options("*", cors({ origin: true }));
 app.use(express.json({ limit: "1mb" }));
 
 function normalizeBadgeId(value) {
